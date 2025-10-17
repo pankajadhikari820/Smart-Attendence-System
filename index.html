@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Smart Event Entry & Attendance System</title>
+  <style>
+    /* ...existing code... */
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f2f5;
+      padding: 50px;
+    }
+    h2 { text-align:center; color:#333; }
+    form { background:white; padding:20px; border-radius:12px; max-width:420px; margin:0 auto; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    input, select, button { width:100%; padding:10px; margin:10px 0; border-radius:8px; border:1px solid #ccc; }
+    button { background:#4CAF50; color:white; font-weight:bold; cursor:pointer; transition:0.3s; }
+    button:hover { background:#45a049; }
+    #downloadCSV { background:#007BFF; }
+    #downloadCSV:hover { background:#0062cc; }
+    #status { margin-top:15px; font-weight:bold; text-align:center; }
+    /* new small styles */
+    #qrcode { display:block; margin:12px auto; text-align:center; }
+    #downloadQR { background:#111; color:#fff; margin-top:6px; }
+  </style>
+</head>
+<body>
+
+  <h2>🎉 Smart Event Registration System</h2>
+
+  <form id="registerForm">
+    <label>Name:</label>
+    <input type="text" id="name" required>
+
+    <label>Email:</label>
+    <input type="email" id="email" required>
+
+    <label>Event Type:</label>
+    <select id="eventType">
+      <option value="solo">Solo</option>
+      <option value="team">Team</option>
+    </select>
+
+    <button type="submit">Submit</button>
+    <button id="downloadCSV" type="button">Download Attendance CSV</button>
+
+    <!-- QR display (shows after successful registration) -->
+    <div id="qrcode" class="hidden"></div>
+    <button id="downloadQR" type="button" class="hidden">Download QR</button>
+  </form>
+
+  <p id="status"></p>
+
+  <!-- QR library (for generation) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+    import { getDatabase, ref, push, set, get, child, update } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+
+    // ✅ Your Firebase Config (keep your keys secure)
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY_HERE",
+      authDomain: "attendence-system-867c1.firebaseapp.com",
+      databaseURL: "https://attendence-system-867c1-default-rtdb.firebaseio.com/",
+      projectId: "attendence-system-867c1",
+      storageBucket: "attendence-system-867c1.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID_HERE",
+      appId: "YOUR_APP_ID_HERE"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const registerForm = document.getElementById("registerForm");
+    const statusEl = document.getElementById("status");
+    const qrcodeEl = document.getElementById("qrcode");
+    const downloadQRBtn = document.getElementById("downloadQR");
+
+    // helper to show QR
+    function showQR(id) {
+      qrcodeEl.classList.remove('hidden');
+      qrcodeEl.innerHTML = '';
+      // payload could be JSON but simple id is enough
+      new QRCode(qrcodeEl, { text: id, width: 180, height: 180 });
+      downloadQRBtn.classList.remove('hidden');
+      downloadQRBtn.onclick = () => {
+        const img = qrcodeEl.querySelector('img') || qrcodeEl.querySelector('canvas');
+        if (!img) return alert('QR not ready');
+        if (img.tagName && img.tagName.toLowerCase() === 'img') {
+          const a = document.createElement('a'); a.href = img.src; a.download = `qr_${id}.png`; a.click();
+        } else {
+          img.toBlob(blob => { const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`qr_${id}.png`; a.click(); URL.revokeObjectURL(url); });
+        }
+      };
+    }
+
+    // ✅ Save Registration Data (store id and qr_payload exactly)
+    registerForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      statusEl.innerText = 'Saving…';
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      const eventType = document.getElementById("eventType").value;
+
+      try {
+        const dbRef = ref(db, "registrations");
+        const newRef = push(dbRef);           // get key first
+        const id = newRef.key;
+        const payload = {
+          id: id,
+          name: name,
+          email: email,
+          eventType: eventType,
+          time: new Date().toLocaleString(),
+          qr_payload: id,
+          checkedIn: false
+        };
+        await set(newRef, payload);          // save including id
+        statusEl.innerText = "✅ Registration Saved!";
+        registerForm.reset();
+        showQR(id);                          // generate QR for organizer/participant
+      } catch (err) {
+        statusEl.innerText = "❌ Error: " + err.message;
+      }
+    });
+
+    // ✅ Download Attendance CSV (unchanged, but robust to missing fields)
+    document.getElementById("downloadCSV").addEventListener("click", async () => {
+      const dbRef = ref(db);
+      try {
+        const snapshot = await get(child(dbRef, "registrations"));
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          let csv = "ID,Name,Email,Event Type,Time,CheckedIn\n";
+          for (let key in data) {
+            const row = data[key];
+            csv += `${row.id || key},${(row.name||'')},${(row.email||'')},${(row.eventType||'')},${(row.time||'')},${row.checkedIn?1:0}\n`;
+          }
+
+          const blob = new Blob([csv], { type: "text/csv" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "attendance.csv";
+          a.click();
+          URL.revokeObjectURL(url);
+
+          document.getElementById("status").innerText = "📥 Attendance CSV downloaded!";
+        } else {
+          document.getElementById("status").innerText = "⚠️ No registrations found!";
+        }
+      } catch (error) {
+        document.getElementById("status").innerText = "❌ Error: " + error.message;
+      }
+    });
+  </script>
+</body>
+</html>

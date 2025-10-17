@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard - Smart Event System</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color:#f0f2f5; margin:0; padding:0; }
+    header { background-color:#4CAF50; color:white; text-align:center; padding:20px 0; font-size:1.8em; font-weight:bold; box-shadow:0 3px 8px rgba(0,0,0,0.1); }
+    .container { max-width:900px; margin:40px auto; background:white; padding:25px; border-radius:12px; box-shadow:0 0 10px rgba(0,0,0,0.1); }
+    input { width:100%; padding:10px; margin-bottom:15px; border:1px solid #ccc; border-radius:8px; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; }
+    table, th, td { border:1px solid #ddd; }
+    th { background-color:#4CAF50; color:white; padding:12px; text-align:left; }
+    td { padding:10px; }
+    button { background-color:#007BFF; color:white; padding:10px 18px; border:none; border-radius:8px; cursor:pointer; margin-top:10px; }
+    button:hover { background-color:#0056b3; }
+    #status { margin-top:15px; font-weight:bold; color:#444; }
+    #checkInRow { display:flex; gap:8px; margin-top:12px; }
+    #checkInRow input { flex:1; }
+    #reader { margin-top:12px; }
+    .card { background:white; padding:20px; border-radius:12px; box-shadow:0 0 10px rgba(0,0,0,0.1); margin-top:20px; }
+    .card h3 { margin-top:0; }
+    .field { margin-bottom:15px; }
+    .field label { display:block; margin-bottom:5px; }
+    .input { width:100%; padding:10px; border:1px solid #ccc; border-radius:8px; }
+    .row { display:flex; gap:8px; }
+    .row .input { flex:1; }
+    .btn { background-color:#007BFF; color:white; padding:10px 18px; border:none; border-radius:8px; cursor:pointer; }
+    .btn:hover { background-color:#0056b3; }
+    .ghost { background-color:transparent; color:#007BFF; border:1px solid #007BFF; }
+    .ghost:hover { background-color:#007BFF; color:white; }
+  </style>
+</head>
+<body>
+
+  <header>📊 Smart Event Admin Dashboard</header>
+
+  <div class="container">
+    <input type="text" id="searchInput" placeholder="🔍 Search by name or email..." />
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Event Type</th>
+          <th>Time</th>
+          <th>Checked-In</th>
+        </tr>
+      </thead>
+      <tbody id="dataBody"></tbody>
+    </table>
+
+    <!-- Check-in / verification -->
+    <div id="checkInRow">
+      <input id="scanInput" placeholder="Paste QR payload (registration id) here" />
+      <button id="checkInBtn">Check-In</button>
+    </div>
+
+    <!-- Optional camera scanner (requires permission) -->
+    <div style="margin-top:10px;">
+      <button id="startScannerBtn">Start Camera Scanner (optional)</button>
+      <button id="stopScannerBtn" disabled>Stop Scanner</button>
+      <div id="reader"></div>
+    </div>
+
+    <button id="downloadCSV">⬇️ Download CSV</button>
+    <p id="status"></p>
+
+    <!-- Form Builder Card -->
+    <div class="card" id="formBuilderCard">
+      <h3>Create Form Template</h3>
+      <div class="field">
+        <label>Template name</label>
+        <input id="tplName" class="input" placeholder="e.g. hackathon-2025" />
+      </div>
+
+      <div id="fieldsList"></div>
+
+      <div class="row">
+        <select id="newFieldType" class="input small">
+          <option value="text">Text</option>
+          <option value="email">Email</option>
+          <option value="select">Select</option>
+          <option value="radio">Radio</option>
+          <option value="checkbox">Checkbox</option>
+        </select>
+        <input id="newFieldLabel" class="input" placeholder="Field label (e.g. University)" />
+        <button id="addFieldBtn" class="btn">Add Field</button>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <button id="saveTemplateBtn" class="btn">Save Template</button>
+        <button id="loadTemplateBtn" class="btn ghost">Load Template</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- optional scanner library -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.7/minified/html5-qrcode.min.js"></script>
+  <script src="./form-builder.js" type="module"></script>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+    import { getDatabase, ref, onValue, update, get } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+
+    // ✅ Replace with your own Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyB8dA1ZW13UtbdmeUGahFjRJkht7RXu1Lc",
+      authDomain: "attendence-system-867c1.firebaseapp.com",
+      databaseURL: "https://attendence-system-867c1-default-rtdb.firebaseio.com",
+      projectId: "attendence-system-867c1",
+      storageBucket: "attendence-system-867c1.firebasestorage.app",
+      messagingSenderId: "1067385874361",
+      appId: "1:1067385874361:web:da3ffbe331505b6a7e7868",
+      measurementId: "G-BCM285Q750"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    const dataBody = document.getElementById("dataBody");
+    const searchInput = document.getElementById("searchInput");
+    let allData = [];
+
+    // Real-time data fetch
+    const dbRef = ref(db, "registrations");
+    onValue(dbRef, (snapshot) => {
+      dataBody.innerHTML = "";
+      allData = [];
+      if (snapshot.exists()) {
+        snapshot.forEach((childSnapshot) => {
+          const data = childSnapshot.val();
+          allData.push(data);
+          const row = `<tr>
+            <td>${data.name||''}</td>
+            <td>${data.email||''}</td>
+            <td>${data.eventType||''}</td>
+            <td>${data.time||''}</td>
+            <td>${data.checkedIn ? '✅' : ''}</td>
+          </tr>`;
+          dataBody.innerHTML += row;
+        });
+        document.getElementById("status").innerText = `✅ ${allData.length} entries loaded`;
+      } else {
+        dataBody.innerHTML = `<tr><td colspan="5">No records found</td></tr>`;
+      }
+    });
+
+    // Search Filter
+    searchInput.addEventListener("keyup", () => {
+      const query = searchInput.value.toLowerCase();
+      const filtered = allData.filter(
+        d => (d.name||'').toLowerCase().includes(query) || (d.email||'').toLowerCase().includes(query)
+      );
+
+      dataBody.innerHTML = "";
+      filtered.forEach((data) => {
+        const row = `<tr>
+          <td>${data.name||''}</td>
+          <td>${data.email||''}</td>
+          <td>${data.eventType||''}</td>
+          <td>${data.time||''}</td>
+          <td>${data.checkedIn ? '✅' : ''}</td>
+        </tr>`;
+        dataBody.innerHTML += row;
+      });
+    });
+
+    // CSV Download
+    document.getElementById("downloadCSV").addEventListener("click", async () => {
+      if (allData.length === 0) {
+        document.getElementById("status").innerText = "⚠️ No data to download!";
+        return;
+      }
+
+      let csv = "ID,Name,Email,Event Type,Time,CheckedIn\n";
+      allData.forEach(d => {
+        csv += `${d.id||''},${d.name||''},${d.email||''},${d.eventType||''},${d.time||''},${d.checkedIn?1:0}\n`;
+      });
+
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "event_attendance.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Check-in by pasted/scanned payload (registration id)
+    const scanInput = document.getElementById('scanInput');
+    const checkInBtn = document.getElementById('checkInBtn');
+    const statusEl = document.getElementById('status');
+
+    checkInBtn.addEventListener('click', async () => {
+      const payload = (scanInput.value || '').trim();
+      if (!payload) { statusEl.innerText = 'Paste QR payload or registration id'; return; }
+
+      try {
+        // payload is expected to be the registration id (we stored id as key)
+        const regRef = ref(db, `registrations/${payload}`);
+        const snap = await get(regRef);
+        if (!snap.exists()) { statusEl.innerText = '⚠️ Registration not found'; return; }
+        await update(regRef, { checkedIn: true, checkedInAt: new Date().toLocaleString() });
+        statusEl.innerText = `✅ Checked-in: ${snap.val().name || payload}`;
+      } catch (err) {
+        console.error(err);
+        statusEl.innerText = '❌ Error: ' + err.message;
+      }
+    });
+
+    // Optional camera QR scanner using html5-qrcode (reads payload text and auto-checks-in)
+    let html5QrcodeScanner = null;
+    const startScannerBtn = document.getElementById('startScannerBtn');
+    const stopScannerBtn = document.getElementById('stopScannerBtn');
+
+    startScannerBtn.addEventListener('click', () => {
+      if (html5QrcodeScanner) return;
+      const readerId = "reader";
+      html5QrcodeScanner = new Html5Qrcode(readerId);
+      Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length) {
+          const cameraId = devices[0].id;
+          html5QrcodeScanner.start(
+            cameraId,
+            { fps: 10, qrbox: 250 },
+            (decodedText, decodedResult) => {
+              // decodedText is the payload (we expect registration id)
+              scanInput.value = decodedText;
+              checkInBtn.click(); // auto perform check-in
+            },
+            (errorMessage) => { /* ignore decode errors */ }
+          ).then(() => {
+            startScannerBtn.disabled = true;
+            stopScannerBtn.disabled = false;
+            statusEl.innerText = 'Scanner running…';
+          }).catch(err => {
+            statusEl.innerText = '❌ Scanner start failed: ' + err;
+          });
+        } else {
+          statusEl.innerText = 'No camera found';
+        }
+      }).catch(err => {
+        statusEl.innerText = '❌ Camera access error: ' + err;
+      });
+    });
+
+    stopScannerBtn.addEventListener('click', () => {
+      if (!html5QrcodeScanner) return;
+      html5QrcodeScanner.stop().then(() => {
+        html5QrcodeScanner.clear();
+        html5QrcodeScanner = null;
+        startScannerBtn.disabled = false;
+        stopScannerBtn.disabled = true;
+        statusEl.innerText = 'Scanner stopped';
+      }).catch(err => {
+        statusEl.innerText = '❌ Stop failed: ' + err;
+      });
+    });
+
+  </script>
+</body>
+</html>
